@@ -88,23 +88,45 @@ class CausalAI:
         if len(df) < 10:  # Need sufficient data
             return 0
         
-        # Simple causal estimation - in production, use more sophisticated methods
-        X = df[[cause]].values
-        y = df[effect].values
-        
-        # Add time lags for causal inference
-        if len(df) > 5:
-            X_lagged = np.column_stack([X[:-1], X[:-2] if len(X) > 2 else X[:-1]])
-            y_lagged = y[1:]
+        try:
+            # Simple causal estimation - in production, use more sophisticated methods
+            X = df[[cause]].values.flatten()
+            y = df[effect].values.flatten()
             
-            if len(X_lagged) == len(y_lagged):
-                model = LinearRegression()
-                model.fit(X_lagged, y_lagged)
-                return model.coef_[0]  # Return primary causal coefficient
-        
-        # Fallback to correlation-based estimation
-        correlation = np.corrcoef(X.flatten(), y.flatten())[0, 1]
-        return correlation * 0.7  # Discount for causality vs correlation
+            # Ensure arrays have same length
+            min_len = min(len(X), len(y))
+            X = X[:min_len]
+            y = y[:min_len]
+            
+            # Add time lags for causal inference
+            if min_len > 5:
+                # Create lagged features with proper array handling
+                X_lag1 = X[:-1]
+                X_lag2 = X[:-2] if len(X) > 2 else X[:-1]
+                
+                # Ensure consistent length
+                min_lag_len = min(len(X_lag1), len(X_lag2))
+                X_lag1 = X_lag1[:min_lag_len]
+                X_lag2 = X_lag2[:min_lag_len]
+                
+                X_lagged = np.column_stack([X_lag1, X_lag2])
+                y_lagged = y[1:min_lag_len+1]
+                
+                if len(X_lagged) == len(y_lagged) and len(X_lagged) > 0:
+                    model = LinearRegression()
+                    model.fit(X_lagged, y_lagged)
+                    return model.coef_[0]  # Return primary causal coefficient
+            
+            # Fallback to correlation-based estimation
+            if len(X) > 0 and len(y) > 0:
+                correlation = np.corrcoef(X, y)[0, 1]
+                if not np.isnan(correlation):
+                    return correlation * 0.7  # Discount for causality vs correlation
+                
+        except Exception as e:
+            print(f"Warning: Causal estimation failed for {cause}->{effect}: {e}")
+            
+        return 0
     
     def predict_intervention_effects(self, current_market_data, interventions):
         """Predict effects of market interventions"""
