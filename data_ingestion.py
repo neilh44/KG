@@ -11,6 +11,27 @@ class BinanceDataIngestion:
         self.base_url = "https://api.binance.com/api/v3"
         self.futures_url = "https://fapi.binance.com/fapi/v1"
     
+    def get_historical_data_bulk(self, symbol="BTCUSDT", interval="1h", days=30):
+        """Get bulk historical data for causal analysis"""
+        limit = min(1000, days * 24)  # Binance limit is 1000
+        
+        endpoint = f"{self.base_url}/klines"
+        params = {
+            'symbol': symbol,
+            'interval': interval,
+            'limit': limit
+        }
+        
+        print(f"Fetching {limit} historical data points ({interval} intervals)")
+        response = requests.get(endpoint, params=params)
+        
+        if response.status_code != 200:
+            print(f"Historical data API Error: {response.text}")
+            return pd.DataFrame()
+        
+        data = response.json()
+        print(f"Received {len(data)} historical data points")
+        
     def get_kline_data(self, symbol="BTCUSDT", interval="1h", limit=100):
         """Get OHLCV data"""
         endpoint = f"{self.base_url}/klines"
@@ -20,16 +41,45 @@ class BinanceDataIngestion:
             'limit': limit
         }
         
-        print(f"Fetching data from: {endpoint}")
         response = requests.get(endpoint, params=params)
-        print(f"Response status: {response.status_code}")
         
         if response.status_code != 200:
             print(f"API Error: {response.text}")
             return pd.DataFrame()
         
         data = response.json()
-        print(f"Received {len(data)} data points")
+        
+        df = pd.DataFrame(data, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades_count', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+        
+        # Convert to proper data types
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        df[numeric_cols] = df[numeric_cols].astype(float)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        
+        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+    
+    def get_historical_funding_rates(self, symbol="BTCUSDT", limit=100):
+        """Get historical funding rates"""
+        endpoint = f"{self.futures_url}/fundingRate"
+        params = {
+            'symbol': symbol,
+            'limit': min(limit, 1000)  # Binance limit
+        }
+        
+        print(f"Fetching {limit} historical funding rates")
+        response = requests.get(endpoint, params=params)
+        
+        if response.status_code != 200:
+            print(f"Historical funding API Error: {response.text}")
+            return []
+        
+        data = response.json()
+        print(f"Received {len(data)} funding rate records")
+        return data if data else []
         
         df = pd.DataFrame(data, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',

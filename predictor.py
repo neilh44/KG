@@ -22,61 +22,91 @@ class BTCPricePredictor:
         self.market_history = []
         self.prediction_history = []
         
-    def initialize_system(self, history_hours=72):
-        """Initialize system with historical data for causal discovery"""
-        print("Initializing BTC Price Prediction System...")
+    def initialize_system_with_bulk_data(self, timeframe="1h", days=30):
+        """Initialize system with bulk historical data"""
+        print(f"🚀 Initializing with bulk historical data...")
+        print(f"📊 Timeframe: {timeframe}, Days: {days}")
         
-        # Test basic connectivity first
-        print("Testing API connectivity...")
-        test_data = self.data_ingestion.get_market_data_snapshot()
-        if test_data is None:
-            print("❌ Failed to connect to Binance API. Check internet connection.")
+        # Get bulk historical OHLCV data
+        historical_ohlcv = self.data_ingestion.get_historical_data_bulk(
+            interval=timeframe, days=days
+        )
+        
+        if historical_ohlcv is None or historical_ohlcv.empty:
+            print("❌ Failed to fetch historical OHLCV data")
             return False
         
-        print("✅ API connectivity confirmed")
+        # Get historical funding rates
+        funding_limit = min(days * 3, 500)  # 3 funding rates per day max
+        historical_funding = self.data_ingestion.get_historical_funding_rates(
+            limit=funding_limit
+        )
         
-        # Collect historical data for causal analysis
-        print("Collecting historical market data...")
-        successful_calls = 0
+        # Create market data snapshots from historical data
+        print(f"📈 Processing {len(historical_ohlcv)} historical data points...")
         
-        for i in range(min(history_hours, 20)):  # Reduced for testing
-            try:
-                print(f"Fetching data point {i+1}...")
-                market_data = self.data_ingestion.get_market_data_snapshot()
-                if market_data is not None:
-                    self.market_history.append(market_data)
-                    successful_calls += 1
-                    print(f"✅ Data point {i+1} collected")
-                else:
-                    print(f"❌ Failed to get data point {i+1}")
+        self.market_history = []
+        
+        # Process in chunks to simulate different time periods
+        chunk_size = max(1, len(historical_ohlcv) // 100)  # Create ~100 data points
+        
+        for i in range(0, len(historical_ohlcv), chunk_size):
+            chunk = historical_ohlcv.iloc[i:i+chunk_size+24]  # Include 24h window
+            
+            if len(chunk) >= 24:
+                # Get corresponding funding rate
+                chunk_timestamp = chunk.iloc[-1]['timestamp']
+                funding_data = self._find_closest_funding(historical_funding, chunk_timestamp)
                 
-                if i < history_hours - 1:  # Don't sleep on last iteration
-                    print("Waiting 2 seconds...")
-                    time.sleep(2)  # Respect API limits
-                    
-            except Exception as e:
-                print(f"❌ Error collecting data point {i+1}: {e}")
-                import traceback
-                print(traceback.format_exc())
-                break
+                # Create market snapshot
+                snapshot = {
+                    'timestamp': chunk_timestamp,
+                    'ohlcv': chunk.tail(24),  # Last 24 hours
+                    'funding': funding_data,
+                    'order_book': {'bids': [[0, 0]], 'asks': [[0, 0]]},  # Placeholder
+                    'open_interest': {'open_interest': 0, 'timestamp': chunk_timestamp}
+                }
+                
+                self.market_history.append(snapshot)
         
-        if successful_calls == 0:
-            print("❌ Failed to collect any market data")
-            return False
+        print(f"✅ Created {len(self.market_history)} market snapshots")
         
         # Discover causal relationships
-        print("Discovering causal relationships...")
+        print("🧠 Discovering causal relationships...")
         try:
-            self.causal_ai.discover_causal_relationships(self.market_history)
-            print("✅ Causal discovery completed")
+            relationships = self.causal_ai.discover_causal_relationships(self.market_history)
+            print(f"✅ Discovered {len(relationships)} causal relationships")
+            
+            # Print discovered relationships
+            if relationships:
+                print("\n🔍 Discovered Causal Relationships:")
+                for rel in relationships[:5]:  # Show top 5
+                    print(f"   • {rel['cause']} → {rel['effect']} (strength: {rel['strength']:.3f})")
+            
         except Exception as e:
-            print(f"❌ Error in causal discovery: {e}")
-            import traceback
-            print(traceback.format_exc())
+            print(f"⚠️  Causal discovery warning: {e}")
         
-        print(f"✅ System initialized with {len(self.market_history)} data points")
-        print(f"✅ Discovered {len(self.causal_ai.causal_relationships)} causal relationships")
         return True
+    
+    def _find_closest_funding(self, funding_history, target_timestamp):
+        """Find funding rate closest to target timestamp"""
+        if not funding_history:
+            return {'funding_rate': 0.0, 'mark_price': 0.0, 'index_price': 0.0}
+        
+        # Convert target to timestamp if needed
+        if hasattr(target_timestamp, 'timestamp'):
+            target_ts = target_timestamp.timestamp() * 1000
+        else:
+            target_ts = target_timestamp
+        
+        closest_funding = min(funding_history, 
+                            key=lambda x: abs(x['fundingTime'] - target_ts))
+        
+        return {
+            'funding_rate': float(closest_funding['fundingRate']),
+            'mark_price': 0.0,  # Not available in historical data
+            'index_price': 0.0
+        }
         
     def generate_prediction(self, prediction_horizon_hours=24):
         """Generate comprehensive price prediction"""
