@@ -98,6 +98,12 @@ class CausalAI:
             X = X[:min_len]
             y = y[:min_len]
             
+            # Normalize data to prevent extreme values
+            if np.std(X) > 0:
+                X = (X - np.mean(X)) / np.std(X)
+            if np.std(y) > 0:
+                y = (y - np.mean(y)) / np.std(y)
+            
             # Add time lags for causal inference
             if min_len > 5:
                 # Create lagged features with proper array handling
@@ -115,13 +121,19 @@ class CausalAI:
                 if len(X_lagged) == len(y_lagged) and len(X_lagged) > 0:
                     model = LinearRegression()
                     model.fit(X_lagged, y_lagged)
-                    return model.coef_[0]  # Return primary causal coefficient
+                    causal_effect = model.coef_[0]
+                    
+                    # Clamp extreme values
+                    causal_effect = np.clip(causal_effect, -2.0, 2.0)
+                    return causal_effect
             
             # Fallback to correlation-based estimation
             if len(X) > 0 and len(y) > 0:
                 correlation = np.corrcoef(X, y)[0, 1]
                 if not np.isnan(correlation):
-                    return correlation * 0.7  # Discount for causality vs correlation
+                    # Scale correlation for causal interpretation
+                    causal_effect = correlation * 0.7
+                    return np.clip(causal_effect, -1.0, 1.0)
                 
         except Exception as e:
             print(f"Warning: Causal estimation failed for {cause}->{effect}: {e}")
