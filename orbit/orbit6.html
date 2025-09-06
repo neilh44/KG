@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BTC Orbital View - Aryabhata's Celestial Mechanics</title>
+    <style>
+        body { margin: 0; background: #0a0a0a; color: white; font-family: Arial; overflow: hidden; }
+        #info { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; }
+        #canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>🌟 BTC Orbital Mechanics</h3>
+        <div id="data">Loading celestial data...</div>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const info = document.getElementById('data');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        let btcData = [];
+        let orbitalCenter = 0;
+        let orbitalRadius = 0;
+        let currentPhase = 0;
+        let currentPrice = 0;
+        let momentum = 0;
+        let escapeVelocity = 0;
+        let momentumHistory = [];
+        let velocityHistory = [];
+        let momentumDecayRate = 0;
+        
+        // NEW: Time-based calculations
+        let phaseHistory = [];
+        let angularVelocity = 0;
+        let timeToCenter = 0;
+        let cycleDuration = 0;
+
+        // Calculate required momentum for 2x outer orbit breakout
+        function calculateRequiredMomentumForOuterOrbit() {
+            return Math.sqrt(2 * (orbitalRadius * 2));
+        }
+
+        // Fetch BTC data from Binance
+        async function fetchBTCData() {
+            try {
+                const response = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=100');
+                const klines = await response.json();
+                btcData = klines.map(k => parseFloat(k[4])); // Close prices
+
+                // Calculate orbital parameters
+                calculateOrbitalParameters();
+                calculateMomentum();
+                calculateTimeBasedMetrics(); // NEW
+                updateInfo();
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        function calculateOrbitalParameters() {
+            if (btcData.length < 3) return;
+
+            // Find orbital center (geometric center)
+            const minPrice = Math.min(...btcData);
+            const maxPrice = Math.max(...btcData);
+            const priceRange = maxPrice - minPrice;
+
+            let minVariance = Infinity;
+            let bestCenter = (minPrice + maxPrice) / 2;
+
+            for (let i = 0; i <= 40; i++) {
+                const testCenter = minPrice + (priceRange * i / 40);
+                const variance = btcData.reduce((sum, price) => sum + Math.pow(price - testCenter, 2), 0);
+
+                if (variance < minVariance) {
+                    minVariance = variance;
+                    bestCenter = testCenter;
+                }
+            }
+
+            orbitalCenter = bestCenter;
+
+            // Calculate orbital radius (RMS)
+            const distances = btcData.map(price => Math.abs(price - orbitalCenter));
+            orbitalRadius = Math.sqrt(distances.reduce((sum, d) => sum + d * d, 0) / distances.length);
+
+            // Calculate current phase
+            currentPrice = btcData[btcData.length - 1];
+            const relativePosition = currentPrice - orbitalCenter;
+            currentPhase = Math.atan2(relativePosition, orbitalRadius);
+            if (currentPhase < 0) currentPhase += 2 * Math.PI;
+        }
+
+        function calculateMomentum() {
+            if (btcData.length < 3) return;
+
+            // Trigonometric velocity calculation
+            const prevPrice = btcData[btcData.length - 2];
+            const radius1 = Math.abs(prevPrice - orbitalCenter);
+            const radius2 = Math.abs(currentPrice - orbitalCenter);
+
+            const theta1 = Math.atan2(prevPrice - orbitalCenter, radius1);
+            const theta2 = Math.atan2(currentPrice - orbitalCenter, radius2);
+
+            // Angular velocity
+            const angularVelocityRaw = theta2 - theta1;
+
+            // Radial velocity
+            const radialVelocity = radius2 - radius1;
+
+            // Combined velocity using Pythagorean theorem
+            const velocity = Math.sqrt(Math.pow(angularVelocityRaw * radius2, 2) + Math.pow(radialVelocity, 2));
+
+            // Momentum = velocity * mass (distance from center)
+            const mass = radius2 + 1;
+            momentum = velocity * mass;
+
+            // Escape velocity = sqrt(2 * orbital_radius)
+            escapeVelocity = Math.sqrt(2 * orbitalRadius);
+
+            // Track momentum and velocity history
+            momentumHistory.push(momentum);
+            velocityHistory.push(velocity);
+
+            if (momentumHistory.length > 10) {
+                momentumHistory.shift();
+                velocityHistory.shift();
+            }
+
+            // Calculate momentum decay rate
+            if (momentumHistory.length >= 3) {
+                const recent = momentumHistory.slice(-3);
+                momentumDecayRate = ((recent[0] - recent[2]) / recent[0]) * 100;
+            }
+        }
+
+        // NEW: Calculate time-based metrics
+        function calculateTimeBasedMetrics() {
+            // Track phase history
+            phaseHistory.push(currentPhase);
+            if (phaseHistory.length > 10) phaseHistory.shift();
+
+            if (phaseHistory.length >= 2) {
+                // Angular velocity in degrees per 10-second period
+                const phaseDiff = phaseHistory[phaseHistory.length - 1] - phaseHistory[phaseHistory.length - 2];
+                angularVelocity = (phaseDiff * 180 / Math.PI); // Convert to degrees
+
+                if (Math.abs(angularVelocity) > 0.01) {
+                    // Time to reach center (0° or 360°)
+                    const currentPhaseDeg = currentPhase * 180 / Math.PI;
+                    const degreesToCenter = currentPhaseDeg > 180 ? 360 - currentPhaseDeg : -currentPhaseDeg;
+                    timeToCenter = Math.abs(degreesToCenter / angularVelocity); // In 10-second periods
+
+                    // Full cycle duration
+                    cycleDuration = Math.abs(360 / angularVelocity); // In 10-second periods
+                }
+            }
+        }
+
+        function updateInfo() {
+            const momentumStatus = momentum >= escapeVelocity ? "🚀 BREAKOUT" : "🔄 ORBITAL";
+            const requiredEscape = escapeVelocity - momentum;
+            const requiredOuterOrbit = calculateRequiredMomentumForOuterOrbit();
+            const requiredForOuterOrbit = requiredOuterOrbit - momentum;
+
+            const higherPlane = orbitalCenter + (orbitalRadius * 2);
+            const lowerPlane = orbitalCenter - (orbitalRadius * 2);
+
+            // NEW: Time-based display
+            const timeDisplay = timeToCenter > 0 ? `${(timeToCenter * 10 / 60).toFixed(1)} min` : 'N/A';
+            const cycleDisplay = cycleDuration > 0 ? `${(cycleDuration * 10 / 3600).toFixed(1)} hrs` : 'N/A';
+
+            info.innerHTML = `
+                <strong>Current Price:</strong> ${currentPrice.toFixed(2)}<br>
+                <strong>Orbital Center:</strong> ${orbitalCenter.toFixed(2)}<br>
+                <strong>Orbital Radius:</strong> ${orbitalRadius.toFixed(2)}<br>
+                <strong>Higher Plane:</strong> ${higherPlane.toFixed(2)}<br>
+                <strong>Lower Plane:</strong> ${lowerPlane.toFixed(2)}<br>
+                <strong>Phase:</strong> ${(currentPhase * 180 / Math.PI).toFixed(1)}°<br>
+                <strong>Distance from Center:</strong> ${Math.abs(currentPrice - orbitalCenter).toFixed(2)}<br>
+                <strong>Momentum:</strong> ${momentum.toFixed(2)} ${momentumStatus}<br>
+                <strong>Escape Velocity:</strong> ${escapeVelocity.toFixed(2)}<br>
+                <strong>Required to Escape:</strong> ${requiredEscape > 0 ? requiredEscape.toFixed(2) : 'ACHIEVED'}<br>
+                <strong>2x Orbit Momentum:</strong> ${requiredOuterOrbit.toFixed(2)}<br>
+                <strong>Required for 2x Orbit:</strong> ${requiredForOuterOrbit > 0 ? requiredForOuterOrbit.toFixed(2) : 'ACHIEVED'}<br>
+                <strong>Momentum Decay Rate:</strong> ${momentumDecayRate.toFixed(2)}%/period<br>
+                <strong>Angular Velocity:</strong> ${angularVelocity.toFixed(2)}°/10s<br>
+                <strong>Time to Center:</strong> ${timeDisplay}<br>
+                <strong>Full Cycle Duration:</strong> ${cycleDisplay}
+            `;
+        }
+
+        function drawOrbitalView() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const scale = Math.min(canvas.width, canvas.height) * 0.3 / orbitalRadius;
+
+            // Draw orbital center (sun/gravitational center)
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.font = '12px Arial';
+            ctx.fillText(`Center: $${orbitalCenter.toFixed(0)}`, centerX + 15, centerY);
+
+            // Draw orbital circles (multiple orbits)
+            for (let r = orbitalRadius * 0.5; r <= orbitalRadius * 2; r += orbitalRadius * 0.25) {
+                ctx.strokeStyle = `rgba(100, 100, 100, ${0.3 - (r / orbitalRadius - 1) * 0.1})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, r * scale, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+
+            // Draw escape velocity orbit (2x radius)
+            ctx.strokeStyle = momentum >= escapeVelocity ? '#ff4444' : '#ff8888';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, orbitalRadius * 2 * scale, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw main orbital path
+            ctx.strokeStyle = '#4a90e2';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, orbitalRadius * scale, 0, 2 * Math.PI);
+            ctx.stroke();
+
+            // Draw price history as orbital trail
+            ctx.strokeStyle = '#32cd32';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            for (let i = 1; i < btcData.length; i++) {
+                const price1 = btcData[i - 1];
+                const price2 = btcData[i];
+
+                const rel1 = price1 - orbitalCenter;
+                const rel2 = price2 - orbitalCenter;
+
+                const phase1 = Math.atan2(rel1, Math.abs(rel1)) + Math.PI/2;
+                const phase2 = Math.atan2(rel2, Math.abs(rel2)) + Math.PI/2;
+
+                const radius1 = Math.abs(rel1) * scale;
+                const radius2 = Math.abs(rel2) * scale;
+
+                const x1 = centerX + radius1 * Math.cos(phase1);
+                const y1 = centerY + radius1 * Math.sin(phase1);
+                const x2 = centerX + radius2 * Math.cos(phase2);
+                const y2 = centerY + radius2 * Math.sin(phase2);
+
+                if (i === 1) {
+                    ctx.moveTo(x1, y1);
+                }
+                ctx.lineTo(x2, y2);
+            }
+            ctx.stroke();
+
+            // Draw current price position (planet/celestial body)
+            const currentDistance = Math.abs(currentPrice - orbitalCenter) * scale;
+            const adjustedPhase = Math.atan2(currentPrice - orbitalCenter, currentDistance / scale) + Math.PI/2;
+
+            const currentX = centerX + currentDistance * Math.cos(adjustedPhase);
+            const currentY = centerY + currentDistance * Math.sin(adjustedPhase);
+
+            // Current price (bright planet with corona effect)
+            const glowColor = momentum >= escapeVelocity ? '#ff0066' : '#ff6666';
+            const gradient = ctx.createRadialGradient(currentX, currentY, 0, currentX, currentY, 15);
+            gradient.addColorStop(0, glowColor);
+            gradient.addColorStop(0.3, '#ff4444');
+            gradient.addColorStop(0.7, '#ff2222');
+            gradient.addColorStop(1, 'rgba(255, 34, 34, 0)');
+
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(currentX, currentY, 15, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // Core planet
+            ctx.fillStyle = momentum >= escapeVelocity ? '#ffff00' : '#ffff00';
+            ctx.beginPath();
+            ctx.arc(currentX, currentY, 4, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // Pulsing ring around current price
+            const time = Date.now() * 0.01;
+            const pulseRadius = 8 + Math.sin(time) * 2;
+            const pulseColor = momentum >= escapeVelocity ? '#ff0066' : '#ffff00';
+            ctx.strokeStyle = `rgba(255, ${momentum >= escapeVelocity ? '6, 102' : '255, 0'}, ${0.5 + Math.sin(time) * 0.3})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(currentX, currentY, pulseRadius, 0, 2 * Math.PI);
+            ctx.stroke();
+
+            // Price label
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText(`$${currentPrice.toFixed(0)}`, currentX + 10, currentY - 10);
+
+            // Draw phase indicator
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(currentX, currentY);
+            ctx.stroke();
+
+            // Phase arc
+            ctx.strokeStyle = 'rgba(255, 212, 0, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 50, 0, adjustedPhase);
+            ctx.stroke();
+
+            // Draw quadrant labels (like astronomical directions)
+            const labelRadius = orbitalRadius * scale + 30;
+            ctx.fillStyle = '#888';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+
+            ctx.fillText('BULL ZONE', centerX, centerY - labelRadius - 10);
+            ctx.fillText('BEAR ZONE', centerX, centerY + labelRadius + 20);
+            ctx.textAlign = 'left';
+            ctx.fillText('FALLING', centerX + labelRadius + 10, centerY);
+            ctx.fillText('RISING', centerX - labelRadius - 40, centerY);
+
+            // Escape velocity label - Higher and Lower Planes
+            const higherPlaneRadius = orbitalCenter + (orbitalRadius * 2);
+            const lowerPlaneRadius = orbitalCenter - (orbitalRadius * 2);
+            ctx.fillStyle = momentum >= escapeVelocity ? '#ff4444' : '#ff8888';
+            ctx.textAlign = 'center';
+            ctx.font = '10px Arial';
+            ctx.fillText('HIGHER PLANE', centerX, centerY - orbitalRadius * 2 * scale - 15);
+            ctx.fillText('LOWER PLANE', centerX, centerY + orbitalRadius * 2 * scale + 15);
+            ctx.fillText(`${higherPlaneRadius.toFixed(0)}`, centerX + orbitalRadius * 2 * scale + 20, centerY - 10);
+            ctx.fillText(`${lowerPlaneRadius.toFixed(0)}`, centerX - orbitalRadius * 2 * scale - 20, centerY + 10);
+
+            // Draw grid/constellation lines
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 0.5;
+            for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 6) {
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX + orbitalRadius * scale * Math.cos(angle),
+                          centerY + orbitalRadius * scale * Math.sin(angle));
+                ctx.stroke();
+            }
+
+            // Draw momentum vs velocity chart
+            drawMomentumChart();
+        }
+
+        function drawMomentumChart() {
+            if (momentumHistory.length < 2) return;
+
+            const chartX = canvas.width - 320;
+            const chartY = 20;
+            const chartWidth = 300;
+            const chartHeight = 200;
+
+            // Chart background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(chartX, chartY, chartWidth, chartHeight);
+            ctx.strokeStyle = '#444';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(chartX, chartY, chartWidth, chartHeight);
+
+            // Chart title
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Momentum vs Velocity Trajectory', chartX + chartWidth/2, chartY - 5);
+
+            // Calculate scales
+            const maxMomentum = Math.max(...momentumHistory);
+            const minMomentum = Math.min(...momentumHistory);
+            const maxVelocity = Math.max(...velocityHistory);
+            const minVelocity = Math.min(...velocityHistory);
+
+            const momentumRange = maxMomentum - minMomentum || 1;
+            const velocityRange = maxVelocity - minVelocity || 1;
+
+            // Draw connected momentum line
+            ctx.strokeStyle = '#ff6b6b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            for (let i = 0; i < momentumHistory.length; i++) {
+                const x = chartX + (i / (momentumHistory.length - 1)) * chartWidth;
+                const normalizedMomentum = (momentumHistory[i] - minMomentum) / momentumRange;
+                const y = chartY + chartHeight - (normalizedMomentum * chartHeight);
+
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Draw connected velocity line
+            ctx.strokeStyle = '#4ecdc4';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            for (let i = 0; i < velocityHistory.length; i++) {
+                const x = chartX + (i / (velocityHistory.length - 1)) * chartWidth;
+                const normalizedVelocity = (velocityHistory[i] - minVelocity) / velocityRange;
+                const y = chartY + chartHeight - (normalizedVelocity * chartHeight);
+
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Labels
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#ff6b6b';
+            ctx.fillText(`Momentum: ${maxMomentum.toFixed(0)}`, chartX + 5, chartY + 15);
+
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#4ecdc4';
+            ctx.fillText(`Velocity: ${maxVelocity.toFixed(2)}`, chartX + chartWidth - 5, chartY + 15);
+
+            // Legend
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#ff6b6b';
+            ctx.fillText('— Momentum', chartX + 5, chartY + chartHeight + 15);
+            ctx.fillStyle = '#4ecdc4';
+            ctx.fillText('— Velocity', chartX + 80, chartY + chartHeight + 15);
+        }
+
+        function animate() {
+            if (btcData.length > 0) {
+                drawOrbitalView();
+            }
+            requestAnimationFrame(animate);
+        }
+
+        // Auto-refresh data every 30 seconds
+        setInterval(fetchBTCData, 10000);
+
+        // Initial load
+        fetchBTCData().then(() => {
+            animate();
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
